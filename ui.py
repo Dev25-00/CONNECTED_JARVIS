@@ -2335,6 +2335,229 @@ class GeminiKeysOverlay(_HudOverlay):
         self.hide()
 
 
+class SshConnectionsOverlay(_HudOverlay):
+    """Manage SSH connections JARVIS can use.
+
+    Two modes:
+    - config : re-uses an alias already in ~/.ssh/config (e.g. 'remote-asus')
+    - password: host + user + password (stored in config/api_keys.json)
+    """
+
+    saved = pyqtSignal()
+    _OW = 520
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        from memory.config_manager import get_ssh_connections
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet(f"""
+            SshConnectionsOverlay {{
+                background: rgba(0, 6, 10, 245);
+                border: 1px solid {C.BORDER_B};
+                border-radius: 6px;
+            }}
+        """)
+        self.setFixedWidth(self._OW)
+        self._conns: list[dict] = list(get_ssh_connections())
+
+        _PRI = (f"QPushButton {{ background: transparent; color: {C.PRI}; "
+                f"border: 1px solid {C.PRI_DIM}; border-radius: 3px; }}"
+                f"QPushButton:hover {{ background: {C.PRI_GHO}; border-color: {C.PRI}; }}")
+        _DIM = (f"QPushButton {{ background: transparent; color: {C.TEXT_MED}; "
+                f"border: 1px solid {C.BORDER}; border-radius: 3px; }}"
+                f"QPushButton:hover {{ color: {C.TEXT}; border-color: {C.BORDER_B}; }}")
+        _FS  = (f"QLineEdit {{ background: #000d12; color: {C.TEXT}; "
+                f"border: 1px solid {C.BORDER}; border-radius: 3px; padding: 2px 8px; }}"
+                f"QLineEdit:focus {{ border: 1px solid {C.PRI}; }}")
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(20, 16, 20, 16)
+        lay.setSpacing(6)
+
+        hdr = QLabel("🖥  SSH CONNECTIONS")
+        hdr.setFont(QFont("Courier New", 12, QFont.Weight.Bold))
+        hdr.setStyleSheet(f"color: {C.PRI}; background: transparent;")
+        lay.addWidget(hdr)
+
+        sub = QLabel("Connexions SSH utilisables par JARVIS. Type 'config' = alias ~/.ssh/config déjà configuré.")
+        sub.setWordWrap(True)
+        sub.setFont(QFont("Courier New", 7))
+        sub.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+        lay.addWidget(sub)
+
+        sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet(f"color: {C.BORDER}; margin: 2px 0;")
+        lay.addWidget(sep)
+
+        self._list_box = QVBoxLayout()
+        self._list_box.setSpacing(4)
+        lay.addLayout(self._list_box)
+
+        # ── mode toggle ───────────────────────────────────────────────────────
+        mode_row = QHBoxLayout(); mode_row.setSpacing(4)
+        self._mode_cfg = QPushButton("SSH CONFIG")
+        self._mode_pwd = QPushButton("HOST + PASSWORD")
+        for btn in (self._mode_cfg, self._mode_pwd):
+            btn.setFixedHeight(26)
+            btn.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setCheckable(True)
+            mode_row.addWidget(btn)
+        self._mode_cfg.setChecked(True)
+        self._mode_cfg.clicked.connect(lambda: self._switch_mode("config"))
+        self._mode_pwd.clicked.connect(lambda: self._switch_mode("password"))
+        lay.addLayout(mode_row)
+
+        # ── form: config mode ─────────────────────────────────────────────────
+        self._cfg_widget = QWidget()
+        cfg_lay = QVBoxLayout(self._cfg_widget)
+        cfg_lay.setContentsMargins(0, 0, 0, 0); cfg_lay.setSpacing(4)
+        lbl_n = QLabel("NOM D'AFFICHAGE"); lbl_n.setFont(QFont("Courier New", 7))
+        lbl_n.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+        cfg_lay.addWidget(lbl_n)
+        self._cfg_name = QLineEdit(); self._cfg_name.setPlaceholderText("ex: ASUS (libre)")
+        self._cfg_name.setFixedHeight(28); self._cfg_name.setStyleSheet(_FS)
+        cfg_lay.addWidget(self._cfg_name)
+        lbl_a = QLabel("ALIAS SSH CONFIG (~/.ssh/config)"); lbl_a.setFont(QFont("Courier New", 7))
+        lbl_a.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+        cfg_lay.addWidget(lbl_a)
+        self._cfg_alias = QLineEdit(); self._cfg_alias.setPlaceholderText("ex: remote-asus")
+        self._cfg_alias.setFixedHeight(28); self._cfg_alias.setStyleSheet(_FS)
+        cfg_lay.addWidget(self._cfg_alias)
+        lay.addWidget(self._cfg_widget)
+
+        # ── form: password mode ───────────────────────────────────────────────
+        self._pwd_widget = QWidget()
+        pwd_lay = QVBoxLayout(self._pwd_widget)
+        pwd_lay.setContentsMargins(0, 0, 0, 0); pwd_lay.setSpacing(4)
+        for attr, placeholder, label in (
+            ("_pwd_name",  "ex: Mon PC",           "NOM D'AFFICHAGE"),
+            ("_pwd_host",  "ex: 192.168.1.100",    "HÔTE / IP"),
+            ("_pwd_user",  "ex: admin",             "UTILISATEUR"),
+            ("_pwd_pass",  "mot de passe",          "MOT DE PASSE"),
+        ):
+            lbl = QLabel(label); lbl.setFont(QFont("Courier New", 7))
+            lbl.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+            pwd_lay.addWidget(lbl)
+            inp = QLineEdit(); inp.setPlaceholderText(placeholder)
+            inp.setFixedHeight(28); inp.setStyleSheet(_FS)
+            if attr == "_pwd_pass":
+                inp.setEchoMode(QLineEdit.EchoMode.Password)
+            setattr(self, attr, inp)
+            pwd_lay.addWidget(inp)
+        lay.addWidget(self._pwd_widget)
+        self._pwd_widget.hide()
+
+        add_btn = QPushButton("+ AJOUTER")
+        add_btn.setFixedHeight(30)
+        add_btn.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        add_btn.setStyleSheet(_PRI)
+        add_btn.clicked.connect(self._add)
+        lay.addWidget(add_btn)
+
+        lay.addSpacing(4)
+        btns = QHBoxLayout(); btns.setSpacing(6)
+        save = QPushButton("SAVE")
+        save.setFixedHeight(32); save.setFont(QFont("Courier New", 9, QFont.Weight.Bold))
+        save.setCursor(Qt.CursorShape.PointingHandCursor); save.setStyleSheet(_PRI)
+        save.clicked.connect(self._save)
+        btns.addWidget(save)
+        close = QPushButton("CLOSE")
+        close.setFixedHeight(32); close.setFont(QFont("Courier New", 9))
+        close.setCursor(Qt.CursorShape.PointingHandCursor); close.setStyleSheet(_DIM)
+        close.clicked.connect(self.hide)
+        btns.addWidget(close)
+        lay.addLayout(btns)
+
+        self._render()
+        self._update_mode_btns()
+
+    def _switch_mode(self, mode: str):
+        self._mode = mode
+        self._cfg_widget.setVisible(mode == "config")
+        self._pwd_widget.setVisible(mode == "password")
+        self._update_mode_btns()
+        self.adjustSize()
+
+    def _update_mode_btns(self):
+        mode = getattr(self, "_mode", "config")
+        act  = (f"QPushButton {{ background: {C.PRI_GHO}; color: {C.PRI}; "
+                f"border: 1px solid {C.PRI}; border-radius: 3px; }}")
+        dim  = (f"QPushButton {{ background: transparent; color: {C.TEXT_MED}; "
+                f"border: 1px solid {C.BORDER}; border-radius: 3px; }}"
+                f"QPushButton:hover {{ color: {C.TEXT}; border-color: {C.BORDER_B}; }}")
+        self._mode_cfg.setStyleSheet(act if mode == "config"   else dim)
+        self._mode_pwd.setStyleSheet(act if mode == "password" else dim)
+        self._mode_cfg.setChecked(mode == "config")
+        self._mode_pwd.setChecked(mode == "password")
+
+    def _render(self):
+        while self._list_box.count():
+            item = self._list_box.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.setParent(None)
+        if not self._conns:
+            empty = QLabel("Aucune connexion configurée.")
+            empty.setFont(QFont("Courier New", 8))
+            empty.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
+            self._list_box.addWidget(empty)
+            return
+        for i, c in enumerate(self._conns):
+            label = c.get("name") or c.get("host") or "?"
+            badge = f"[config: {c['host']}]" if c.get("type") == "config" else f"[{c.get('user','?')}@{c.get('host','?')}]"
+            r = QHBoxLayout(); r.setSpacing(6)
+            lbl = QLabel(f"{i + 1}.  {label}  {badge}")
+            lbl.setFont(QFont("Courier New", 8))
+            lbl.setStyleSheet(f"color: {C.TEXT}; background: transparent;")
+            holder = QWidget(); holder.setLayout(r)
+            r.addWidget(lbl, 1)
+            rm = QPushButton("✕")
+            rm.setFixedSize(24, 24)
+            rm.setCursor(Qt.CursorShape.PointingHandCursor)
+            rm.setStyleSheet(
+                f"QPushButton {{ background: transparent; color: {C.TEXT_DIM}; "
+                f"border: 1px solid {C.BORDER}; border-radius: 3px; }}"
+                f"QPushButton:hover {{ color: #ef4444; border-color: #ef4444; }}")
+            rm.clicked.connect(lambda _=False, idx=i: self._remove(idx))
+            r.addWidget(rm)
+            self._list_box.addWidget(holder)
+
+    def _add(self):
+        mode = getattr(self, "_mode", "config")
+        if mode == "config":
+            alias = self._cfg_alias.text().strip()
+            name  = self._cfg_name.text().strip() or alias
+            if not alias:
+                return
+            self._conns.append({"name": name, "type": "config", "host": alias})
+            self._cfg_name.clear(); self._cfg_alias.clear()
+        else:
+            host = self._pwd_host.text().strip()
+            name = self._pwd_name.text().strip() or host
+            user = self._pwd_user.text().strip()
+            pwd  = self._pwd_pass.text().strip()
+            if not host:
+                return
+            self._conns.append({"name": name, "type": "password",
+                                 "host": host, "user": user, "password": pwd})
+            for w in (self._pwd_name, self._pwd_host, self._pwd_user, self._pwd_pass):
+                w.clear()
+        self._render()
+
+    def _remove(self, idx: int):
+        if 0 <= idx < len(self._conns):
+            self._conns.pop(idx)
+            self._render()
+
+    def _save(self):
+        from memory.config_manager import save_ssh_connections
+        save_ssh_connections(self._conns)
+        self.saved.emit()
+        self.hide()
+
+
 class WakeEngineOverlay(_HudOverlay):
     """Select the wake word engine and configure its settings.
 
@@ -4600,6 +4823,14 @@ class MainWindow(QMainWindow):
         settings_btn.clicked.connect(self._open_plugin_settings)
         lay.addWidget(settings_btn)
 
+        ssh_btn = QPushButton("🖥  SSH CONNECTIONS")
+        ssh_btn.setFixedHeight(26)
+        ssh_btn.setFont(QFont("Courier New", 7))
+        ssh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        ssh_btn.setStyleSheet(_BTN_STYLE_DIM)
+        ssh_btn.clicked.connect(self._open_ssh_connections)
+        lay.addWidget(ssh_btn)
+
         w.adjustSize()
         return w
 
@@ -5758,6 +5989,12 @@ class MainWindow(QMainWindow):
             n = 0
         self._log.append_log(
             f"SYS: Gemini keys updated — {n} key(s). Takes effect on the next reconnect.")
+
+    def _open_ssh_connections(self):
+        ov = SshConnectionsOverlay(parent=self.centralWidget())
+        ov.saved.connect(lambda: self._log.append_log("SYS: Connexions SSH sauvegardées."))
+        self._centre_overlay(ov)
+        self._ssh_overlay = ov
 
     def _open_wake_engine(self):
         ov = WakeEngineOverlay(parent=self.centralWidget())

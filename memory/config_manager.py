@@ -454,6 +454,16 @@ def save_plugin_config(namespace: str, values: dict) -> None:
     CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
 
 
+def get_ssh_connections() -> list[dict]:
+    """Saved SSH connections. Each entry: {name, type='config'|'password', host?, user?, password?}."""
+    raw = load_api_keys().get("ssh_connections", [])
+    return raw if isinstance(raw, list) else []
+
+
+def save_ssh_connections(connections: list[dict]) -> None:
+    _patch_config(ssh_connections=connections)
+
+
 def save_plugin_enabled(plugin_name: str, enabled: bool) -> None:
     ensure_config_dir()
     data: dict = {}
