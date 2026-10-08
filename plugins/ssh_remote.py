@@ -57,7 +57,7 @@ def _run_ssh(conn: dict, command: str, timeout: int) -> str:
     conn_type = conn.get("type", "config")
 
     if conn_type == "config":
-        alias = conn.get("alias") or conn.get("name")
+        alias = conn.get("alias") or conn.get("host") or conn.get("name")
         cmd = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", alias, command]
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
