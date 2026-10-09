@@ -18,6 +18,12 @@ PLUGIN = {
         "Utilise les connexions sauvegardées dans l'UI SSH de JARVIS. "
         "Actions : list_connections (lister les connexions disponibles), "
         "run_command (exécuter une commande sur une connexion nommée). "
+        "IMPORTANT — chaque appel run_command est une session SSH indépendante : "
+        "un 'cd' ne persiste pas d'un appel à l'autre. Pour naviguer, combiner "
+        "les commandes en une seule : ex. 'cd /chemin && ls' ou 'ls /chemin/absolu'. "
+        "Pour explorer une machine, commencer par 'ls ~' puis cibler le chemin voulu. "
+        "Toujours appeler list_connections d'abord si le nom exact de la connexion "
+        "n'est pas connu. "
         "Utiliser ce plugin quand l'utilisateur parle d'un serveur distant, "
         "d'une machine remote, ou cite explicitement un nom de connexion SSH."
     ),
@@ -47,8 +53,11 @@ PLUGIN = {
 
 
 def _find_connection(name: str) -> dict | None:
+    name_l = name.lower()
     for conn in get_ssh_connections():
-        if conn.get("name", "").lower() == name.lower():
+        if conn.get("name", "").lower() == name_l:
+            return conn
+        if conn.get("alias", "").lower() == name_l:
             return conn
     return None
 
@@ -65,7 +74,7 @@ def _run_ssh(conn: dict, command: str, timeout: int) -> str:
             err = result.stderr.strip()
             if result.returncode != 0:
                 return f"Erreur (code {result.returncode}): {err or out}"
-            return out or "(commande exécutée, pas de sortie)"
+            return out if out else "(commande exécutée avec succès — aucune sortie, répertoire peut-être vide)"
         except subprocess.TimeoutExpired:
             return f"Timeout après {timeout}s."
         except FileNotFoundError:
@@ -92,7 +101,7 @@ def _run_ssh(conn: dict, command: str, timeout: int) -> str:
                 err = result.stderr.strip()
                 if result.returncode != 0:
                     return f"Erreur (code {result.returncode}): {err or out}"
-                return out or "(commande exécutée, pas de sortie)"
+                return out if out else "(commande exécutée avec succès — aucune sortie, répertoire peut-être vide)"
             except subprocess.TimeoutExpired:
                 return f"Timeout après {timeout}s."
             except FileNotFoundError:
@@ -109,7 +118,7 @@ def _run_ssh(conn: dict, command: str, timeout: int) -> str:
             client.close()
             if err and not out:
                 return f"Erreur: {err}"
-            return out or "(commande exécutée, pas de sortie)"
+            return out if out else "(commande exécutée avec succès — aucune sortie, répertoire peut-être vide)"
         except ImportError:
             return (
                 "Connexion par mot de passe nécessite 'sshpass' (Linux/Mac) "
