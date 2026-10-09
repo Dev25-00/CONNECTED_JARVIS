@@ -65,6 +65,8 @@ def _find_connection(name: str) -> dict | None:
             return conn
         if conn.get("alias", "").lower() == name_l:
             return conn
+        if conn.get("host", "").lower() == name_l:
+            return conn
     return None
 
 
@@ -72,7 +74,7 @@ def _run_ssh(conn: dict, command: str, timeout: int) -> str:
     conn_type = conn.get("type", "config")
 
     if conn_type == "config":
-        alias = conn.get("alias") or conn.get("name")
+        alias = conn.get("alias") or conn.get("host") or conn.get("name")
         # StrictHostKeyChecking=accept-new : accepte automatiquement les nouvelles clés
         # mais refuse les clés qui ont changé (sécurité). Pas de BatchMode=yes car il
         # bloque silencieusement si la clé hôte n'est pas encore dans known_hosts.
