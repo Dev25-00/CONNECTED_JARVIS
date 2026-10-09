@@ -100,6 +100,8 @@ def _run_ssh(conn: dict, command: str, timeout: int) -> str:
                         f"Vérifiez dans ⚙ → SSH CONNECTIONS que l'alias est correct."
                     )
                 return f"Erreur (code {result.returncode}): {msg}"
+
+                return f"Erreur (code {result.returncode}): {err or out}"
             if err:
                 _log(f"avertissement SSH : {err}")
             return out if out else "(commande exécutée avec succès — aucune sortie, répertoire peut-être vide)"
