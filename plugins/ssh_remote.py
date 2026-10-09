@@ -91,7 +91,15 @@ def _run_ssh(conn: dict, command: str, timeout: int) -> str:
             err = result.stderr.strip()
             _log(f"exit={result.returncode}  stdout={out[:120]!r}  stderr={err[:120]!r}")
             if result.returncode != 0:
-                return f"Erreur (code {result.returncode}): {err or out}"
+                msg = err or out
+                if "could not resolve hostname" in msg.lower() or "hôte inconnu" in msg.lower() or "h\\364te" in msg.lower():
+                    return (
+                        f"Impossible de résoudre l'alias SSH '{alias}'. "
+                        f"Le champ Alias de la connexion doit correspondre exactement "
+                        f"à une entrée 'Host' dans ~/.ssh/config. "
+                        f"Vérifiez dans ⚙ → SSH CONNECTIONS que l'alias est correct."
+                    )
+                return f"Erreur (code {result.returncode}): {msg}"
             if err:
                 _log(f"avertissement SSH : {err}")
             return out if out else "(commande exécutée avec succès — aucune sortie, répertoire peut-être vide)"
