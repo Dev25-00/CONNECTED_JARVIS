@@ -51,6 +51,12 @@ PLUGIN = {
     },
 }
 
+_PREFIX = "[SSH]"
+
+
+def _log(msg: str) -> None:
+    print(f"{_PREFIX} {msg}", flush=True)
+
 
 def _find_connection(name: str) -> dict | None:
     name_l = name.lower()
@@ -67,17 +73,33 @@ def _run_ssh(conn: dict, command: str, timeout: int) -> str:
 
     if conn_type == "config":
         alias = conn.get("alias") or conn.get("name")
-        cmd = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", alias, command]
+        # StrictHostKeyChecking=accept-new : accepte automatiquement les nouvelles clés
+        # mais refuse les clés qui ont changé (sécurité). Pas de BatchMode=yes car il
+        # bloque silencieusement si la clé hôte n'est pas encore dans known_hosts.
+        cmd = [
+            "ssh",
+            "-o", "StrictHostKeyChecking=accept-new",
+            "-o", "ConnectTimeout=10",
+            "-o", "PasswordAuthentication=no",
+            alias,
+            command,
+        ]
+        _log(f"config → commande : {' '.join(shlex.quote(c) for c in cmd)}")
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
             out = result.stdout.strip()
             err = result.stderr.strip()
+            _log(f"exit={result.returncode}  stdout={out[:120]!r}  stderr={err[:120]!r}")
             if result.returncode != 0:
                 return f"Erreur (code {result.returncode}): {err or out}"
+            if err:
+                _log(f"avertissement SSH : {err}")
             return out if out else "(commande exécutée avec succès — aucune sortie, répertoire peut-être vide)"
         except subprocess.TimeoutExpired:
+            _log(f"timeout après {timeout}s")
             return f"Timeout après {timeout}s."
         except FileNotFoundError:
+            _log("ssh introuvable sur cette machine")
             return "SSH n'est pas installé sur cette machine."
 
     elif conn_type == "password":
@@ -87,28 +109,31 @@ def _run_ssh(conn: dict, command: str, timeout: int) -> str:
         if not host or not user:
             return "Connexion incomplète : host ou user manquant."
 
-        # Essai avec sshpass si disponible, sinon via paramiko si dispo
         import shutil
         if shutil.which("sshpass"):
             cmd = [
                 "sshpass", "-p", password,
-                "ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10",
+                "ssh", "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=10",
                 f"{user}@{host}", command,
             ]
+            _log(f"password/sshpass → {user}@{host} : {command}")
             try:
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
                 out = result.stdout.strip()
                 err = result.stderr.strip()
+                _log(f"exit={result.returncode}  stdout={out[:120]!r}  stderr={err[:120]!r}")
                 if result.returncode != 0:
                     return f"Erreur (code {result.returncode}): {err or out}"
                 return out if out else "(commande exécutée avec succès — aucune sortie, répertoire peut-être vide)"
             except subprocess.TimeoutExpired:
+                _log(f"timeout après {timeout}s")
                 return f"Timeout après {timeout}s."
             except FileNotFoundError:
                 pass
 
         try:
             import paramiko
+            _log(f"password/paramiko → {user}@{host} : {command}")
             client = paramiko.SSHClient()
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             client.connect(host, username=user, password=password, timeout=10)
@@ -116,6 +141,7 @@ def _run_ssh(conn: dict, command: str, timeout: int) -> str:
             out = stdout.read().decode().strip()
             err = stderr.read().decode().strip()
             client.close()
+            _log(f"paramiko ok  stdout={out[:120]!r}  stderr={err[:120]!r}")
             if err and not out:
                 return f"Erreur: {err}"
             return out if out else "(commande exécutée avec succès — aucune sortie, répertoire peut-être vide)"
@@ -126,6 +152,7 @@ def _run_ssh(conn: dict, command: str, timeout: int) -> str:
                 "Aucun n'est disponible."
             )
         except Exception as e:
+            _log(f"paramiko erreur : {e}")
             return f"Erreur SSH: {e}"
 
     return f"Type de connexion inconnu : {conn_type!r}"
@@ -136,6 +163,7 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
 
     if action == "list_connections":
         conns = get_ssh_connections()
+        _log(f"list_connections → {len(conns)} entrée(s)")
         if not conns:
             return "Aucune connexion SSH configurée. Utilisez l'UI SSH CONNECTIONS pour en ajouter."
         lines = []
@@ -160,8 +188,10 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
         if conn is None:
             available = [c.get("name", "") for c in get_ssh_connections()]
             avail_str = ", ".join(available) if available else "aucune"
+            _log(f"connexion '{name}' introuvable — disponibles : {avail_str}")
             return f"Connexion '{name}' introuvable. Disponibles : {avail_str}."
 
+        _log(f"run_command  connection={name!r}  command={command!r}  timeout={timeout}")
         if player:
             try:
                 player.write_log(f"JARVIS: SSH → {name} : {command}")
@@ -169,6 +199,7 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
                 pass
 
         result = _run_ssh(conn, command, timeout)
+        _log(f"résultat : {result[:120]!r}")
         return f"[{name}] {result}"
 
     return f"Action inconnue : {action!r}. Valeurs valides : list_connections, run_command."
